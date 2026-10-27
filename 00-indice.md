@@ -4,7 +4,7 @@ Cheatsheets por tema, cada uno con el paso a paso de los ejercicios de parciales
 
 ## Archivos
 
-- [HTTP, curl y nginx](01-http-nginx.md) — 4 ejercicios
+- [HTTP, curl y nginx](01-http-nginx.md) — 5 ejercicios
 - [DNS, dig y BIND](02-dns-bind.md) — 4 ejercicios
 - [Mail: SMTP, POP3 y MIME](03-mail.md) — 2 ejercicios
 - [Red: rutas, nmap y DHCP](04-red-dhcp.md) — 3 ejercicios
