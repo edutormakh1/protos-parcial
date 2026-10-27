@@ -748,3 +748,111 @@ _Fuente: Enunciado real: parcial práctico 2026 1C (PDF). Solución de referenci
 
 ---
 
+
+### Ejercicio extra: restaurar una zona DNS desde un PCAP
+
+Cachito borró todos los archivos de configuración de la zona y el cronjob de backups no corre desde 2018. Por suerte quedó una captura PCAP con queries y replies del namemaster, descargable de `http://192.168.0.238:8000/backup.pcapng`. Hay que restaurar la configuración original con bind9 y agregar un TXT que diga "cachito tiene prohibido editar este archivo". (Aclaración de la cátedra: si ya tenés un BIND configurado es más fácil; el puerto es el 8000.)
+
+**La idea:** DNS no guarda historia, así que la única fuente para reconstruir la zona son las respuestas **autoritativas** que quedaron en la captura (flag `aa`): vienen del namemaster, no de una caché, por lo que sus TTL son los configurados. Si hay un AXFR (transferencia de zona), la zona entera está en esa única transferencia.
+
+**1. Bajar la captura**
+
+```
+mkdir -p ~/Documents/dns/cachito && cd ~/Documents/dns/cachito
+curl -O http://192.168.0.238:8000/backup.pcapng
+```
+
+**2. Sacar los registros de la captura**
+
+Primero fijate si hay transferencia de zona (AXFR): si está, tenés la zona completa en un solo stream.
+
+```
+# ¿hay AXFR? (tipo 252)
+tshark -r backup.pcapng -Y 'dns.qry.type == 252'
+# si aparece, seguí el stream TCP:
+tshark -r backup.pcapng -Y 'dns.qry.type == 252' -z follow,tcp,ascii,0 -q
+```
+
+Si **no** hay AXFR, mirá las respuestas autoritativas del namemaster y desplegá cada paquete:
+
+```
+tshark -r backup.pcapng -Y 'dns.flags.response == 1 && dns.flags.authoritative == 1' -V | less
+```
+
+(En Wireshark gráfico: filtro `dns.flags.response == 1 && dns.flags.authoritative == 1`, y leés Answers, Authoritative nameservers y Additional records en el panel del medio.)
+
+Anotá de cada registro **nombre, TTL, tipo y valor**:
+- **SOA:** sale de la respuesta a una consulta SOA y de la sección Authority de las respuestas NXDOMAIN. De ahí salen el primary NS, el mail del responsable, serial, refresh, retry, expire y minimum.
+- **NS** y la IP de cada NS (en Additional).
+- **A, AAAA, CNAME, MX** (con su preferencia), **TXT, SRV**.
+- **PTR:** si hay consultas `x.x.x.x.in-addr.arpa`, también restaurá la zona inversa.
+
+Usá los TTL de las respuestas autoritativas: las que pasaron por una caché vienen con el TTL ya descontado.
+
+**3. Escribir el archivo de zona**
+
+```
+sudo cp /etc/bind/db.local /etc/bind/db.ZONA   # plantilla; db.cachito.com ya no existe
+sudo nano /etc/bind/db.ZONA
+```
+
+```
+$TTL <TTL más común en la captura>
+$ORIGIN ZONA.
+@ IN SOA <primary NS>. <mail con . en vez de @>. (
+  <serial original + 1>
+  <refresh>
+  <retry>
+  <expire>
+  <minimum> )
+@   <ttl> IN NS ns1.ZONA.
+ns1 <ttl> IN A <ip>
+@   <ttl> IN A <ip>
+www <ttl> IN CNAME @
+@   <ttl> IN MX 10 mail.ZONA.
+mail <ttl> IN A <ip>
+; un registro por cada uno que aparezca en la captura
+@ IN TXT "cachito tiene prohibido editar este archivo"
+```
+
+Los nombres absolutos terminan en punto (sin el punto BIND les agrega el `$ORIGIN`). En el mail del SOA la `@` se escribe como punto, y si el usuario tiene un punto se escapa con `\.`. Los valores del SOA son los originales, salvo el **serial, que sube en uno** porque se agregó el TXT.
+
+**4. Declarar la zona y levantar BIND**
+
+```
+sudo nano /etc/bind/named.conf.local
+```
+
+```
+zone "ZONA" {
+  type master;
+  file "/etc/bind/db.ZONA";
+  allow-transfer { 127.0.0.1; };
+};
+```
+
+```
+sudo named-checkconf
+sudo named-checkzone ZONA /etc/bind/db.ZONA
+sudo systemctl restart named   # si falla: journalctl -u named -n 30
+```
+
+**5. Verificar**
+
+```
+dig @127.0.0.1 ZONA AXFR
+dig @127.0.0.1 ZONA TXT +short
+dig @127.0.0.1 www.ZONA +noall +answer
+```
+
+Consultá los mismos nombres que aparecen en la captura y compará valor y TTL. Las respuestas tienen que traer el flag `aa`.
+
+**Errores típicos**
+
+- `sudo cp /etc/bind/db.cachito.com ...`: ese archivo lo borró Cachito, no existe. Partí de `db.local`.
+- Contar con Wireshark gráfico: la VM del lab puede no tenerlo o no tener entorno gráfico. `tshark -V` hace lo mismo desde la terminal.
+- Inventar registros que no están en la captura: si no hay AXFR, solo podés recuperar los nombres que alguien consultó. Restaurá lo que aparece y nada más.
+- No subir el serial: los secundarios no se enteran del cambio (el TXT agregado).
+- Tomar TTL de respuestas sin `aa`: vienen de caché, con el TTL descontado; no son los configurados.
+
+_Fuente: enunciado de parcial (restaurar zona desde PCAP). Relacionado: Zona master (arriba), Ejercicio 2 y Ejercicio 4, y "Resueltos — Capturas (Wireshark)" en 07-machete-parciales-resueltos.md._
