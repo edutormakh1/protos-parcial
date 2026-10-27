@@ -10,6 +10,7 @@ Cheatsheets por tema, cada uno con el paso a paso de los ejercicios de parciales
 - [Red: rutas, nmap y DHCP](04-red-dhcp.md) — 3 ejercicios
 - [TLS: HTTPS con certificado](05-tls.md) — 1 ejercicio
 - [SSH y túneles](06-ssh-tuneles.md) — 2 ejercicios
+- [Machete: parciales 2007–2025 resueltos](07-machete-parciales-resueltos.md) — 60 ejercicios por tipo (original: [.docx](07-machete-parciales-resueltos.docx))
 
 ## Orden sugerido para repasar
 
